@@ -21,6 +21,11 @@ class CryptoDataCollector:
         """Handle shutdown signals"""
         print("\nShutdown signal received. Cleaning up...")
         self.is_running = False
+    
+    def stop_collecting(self):
+        """Method to manually stop collection"""
+        self.is_running = False
+        print("Stopping data collection...")
         
     def initialize_database(self):
         """Create database and tables if they don't exist"""
@@ -32,7 +37,7 @@ class CryptoDataCollector:
             CREATE TABLE IF NOT EXISTS kline_data (
                 symbol TEXT,
                 interval TEXT,
-                timestamp DATETIME,
+                timestamp TEXT,
                 open REAL,
                 high REAL,
                 low REAL,
@@ -49,7 +54,7 @@ class CryptoDataCollector:
             CREATE TABLE IF NOT EXISTS last_updates (
                 symbol TEXT,
                 interval TEXT,
-                last_timestamp DATETIME,
+                last_timestamp TEXT,
                 PRIMARY KEY (symbol, interval)
             )
         ''')
@@ -59,32 +64,47 @@ class CryptoDataCollector:
 
     def get_last_update_time(self, symbol, interval):
         """Get the timestamp of the last stored data point"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT last_timestamp 
-            FROM last_updates 
-            WHERE symbol = ? AND interval = ?
-        ''', (symbol, interval))
-        
-        result = cursor.fetchone()
-        conn.close()
-        
-        return pd.to_datetime(result[0]) if result else None
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT last_timestamp 
+                FROM last_updates 
+                WHERE symbol = ? AND interval = ?
+            ''', (symbol, interval))
+            
+            result = cursor.fetchone()
+            conn.close()
+            if result:
+                return pd.to_datetime(result[0])
+            else:
+                return None
+        except Exception as e:
+            print(f"Error getting last update time: {e}")
+            return None
+
 
     def update_last_time(self, symbol, interval, timestamp):
         """Update the last stored timestamp"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT OR REPLACE INTO last_updates (symbol, interval, last_timestamp)
-            VALUES (?, ?, ?)
-        ''', (symbol, interval, timestamp))
-        
-        conn.commit()
-        conn.close()
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Convert timestamp to string if it's a datetime object
+            if isinstance(timestamp, pd.Timestamp):
+                timestamp = timestamp.strftime('%Y-%m-%d %H:%M:%S')
+            
+            cursor.execute('''
+                INSERT OR REPLACE INTO last_updates (symbol, interval, last_timestamp)
+                VALUES (?, ?, ?)
+            ''', (symbol, interval, timestamp))
+            
+            conn.commit()
+            conn.close()
+            
+        except Exception as e:
+            print(f"Error updating last time: {e}")
 
 
     def get_klines(self, symbol, interval, start_time=None, limit=1000):
@@ -193,23 +213,29 @@ class CryptoDataCollector:
         """Store new kline data in the database"""
         if df is None or df.empty:
             return
+        
+        try:
+            conn = sqlite3.connect(self.db_path)
+
+            df_to_store = df.copy()
+            df_to_store['timestamp'] = df_to_store['timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
             
-        conn = sqlite3.connect(self.db_path)
-        
-        # Convert DataFrame to format matching database schema
-        df_to_store = df[['timestamp', 'open', 'high', 'low', 'close', 'volume', 
-                         'quote_volume', 'trades']].copy()
-        df_to_store['symbol'] = symbol
-        df_to_store['interval'] = interval
-        
-        # Store the data
-        df_to_store.to_sql('kline_data', conn, if_exists='append', index=False,
-                          method='multi', chunksize=1000)
-        
-        # Update the last timestamp
-        self.update_last_time(symbol, interval, df_to_store['timestamp'].max())
-        
-        conn.close()
+            # Convert DataFrame to format matching database schema
+            df_to_store = df[['timestamp', 'open', 'high', 'low', 'close', 'volume', 
+                            'quote_volume', 'trades']].copy()
+            df_to_store['symbol'] = symbol
+            df_to_store['interval'] = interval
+            
+            # Store the data
+            df_to_store.to_sql('kline_data', conn, if_exists='append', index=False,
+                            method='multi', chunksize=1000)
+            
+            # Update the last timestamp
+            self.update_last_time(symbol, interval, df_to_store['timestamp'].iloc[-1])
+            
+            conn.close()
+        except Exception as e:
+            print(f"Error storing data: {e}")
 
     def collect_data(self, symbol, interval, sleep_time=60):
         """
@@ -243,7 +269,8 @@ class CryptoDataCollector:
                 # Store the new data
                 self.store_kline_data(new_data, symbol, interval)
                 
-                print(f"{datetime.now()}: Collected {len(new_data) if new_data is not None else 0} new records for {symbol}")
+                if new_data is not None:
+                    print(f"{datetime.now()}: Collected {len(new_data) if new_data is not None else 0} new records for {symbol}")
                 
                 if not self.is_running:
                     break
@@ -264,7 +291,4 @@ class CryptoDataCollector:
         number = int(interval[:-1])
         return number * units[unit]
     
-    def stop_collecting(self):
-        """Method to manually stop collection"""
-        self.is_running = False
-        print("Stopping data collection...")
+    
