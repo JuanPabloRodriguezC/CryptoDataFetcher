@@ -1,0 +1,16 @@
+name: crypto-trading
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - pip
+  - pandas
+  - numpy
+  - tensorflow
+  - sqlite
+  - requests
+  - websocket-client
+  - python-dateutil
+  - pip:
+    - python-binance==1.0.17
