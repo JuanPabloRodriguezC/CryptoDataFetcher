@@ -1,6 +1,8 @@
 import numpy as np
 import tensorflow as tf
 from datetime import datetime, timedelta
+import sqlite3
+import pandas as pd
 
 class TFDataExporter:
     def __init__(self, database_path="crypto_data.db"):
