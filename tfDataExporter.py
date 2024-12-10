@@ -8,63 +8,88 @@ class TFDataExporter:
     def __init__(self, database_path="crypto_data.db"):
         self.db_path = database_path
 
-    def _normalize_data(self, df):
-        """Normalize the numerical columns"""
-        numeric_columns = ['open', 'high', 'low', 'close', 'volume', 'quote_volume']
-        result = df.copy()
+
+    def export_to_numpy(self, symbol, interval, start_date=None, end_date=None,
+                   sequence_length=60, batch_size=1000):
+        """Export data as numpy arrays ready for TensorFlow"""
+        conn = sqlite3.connect(self.db_path)
         
-        for column in numeric_columns:
-            mean = df[column].mean()
-            std = df[column].std()
-            result[column] = (df[column] - mean) / std
+        # First, get the total count of records
+        count_query = """
+            SELECT COUNT(*) FROM kline_data
+            WHERE symbol = ? AND interval = ?
+        """
+        cursor = conn.cursor()
+        cursor.execute(count_query, (symbol, interval))
+        total_records = cursor.fetchone()[0]
+        print(f"Total records to process: {total_records}")
+        
+        # Initialize empty lists to store sequences and targets
+        sequences = []
+        targets = []
+        
+        # Process data in batches
+        offset = 0
+        while offset < total_records:
+            query = """
+                SELECT timestamp, open, high, low, close, volume, quote_volume
+                FROM kline_data
+                WHERE symbol = ? AND interval = ?
+                ORDER BY timestamp
+                LIMIT ? OFFSET ?
+            """
             
-        return result
+            df_chunk = pd.read_sql_query(
+                query, 
+                conn, 
+                params=(symbol, interval, batch_size, offset)
+            )
+            
+            if df_chunk.empty:
+                break
+                
+            # Process this chunk
+            if len(df_chunk) > sequence_length:
+                chunk_sequences, chunk_targets = self.create_sequences(
+                    df_chunk, 
+                    sequence_length=sequence_length
+                )
+                sequences.extend(chunk_sequences)
+                targets.extend(chunk_targets)
+            
+            offset += batch_size
+            print(f"Processed {min(offset, total_records)}/{total_records} records")
+        
+        conn.close()
+        
+        if not sequences:
+            return None, None
+            
+        return np.array(sequences), np.array(targets)
 
     def create_sequences(self, df, sequence_length=60):
         """Create sequences for time series prediction"""
-        data = self._normalize_data(df)
         sequences = []
         targets = []
         
         # Use relevant features
         features = ['open', 'high', 'low', 'close', 'volume', 'quote_volume']
         
-        for i in range(len(data) - sequence_length):
+        # Create sequences only if we have enough data
+        if len(df) <= sequence_length:
+            return sequences, targets
+            
+        for i in range(len(df) - sequence_length):
             # Create sequence
-            sequence = data[features].iloc[i:(i + sequence_length)].values
+            sequence = df[features].iloc[i:(i + sequence_length)].values
             # Target could be next closing price
-            target = data['close'].iloc[i + sequence_length]
+            target = df['close'].iloc[i + sequence_length]
             
             sequences.append(sequence)
             targets.append(target)
-            
-        return np.array(sequences), np.array(targets)
+        
+        return sequences, targets
 
-    def export_to_numpy(self, symbol, interval, start_date=None, end_date=None,
-                       sequence_length=60):
-        """Export data as numpy arrays ready for TensorFlow"""
-        conn = sqlite3.connect(self.db_path)
-        
-        query = """
-            SELECT timestamp, open, high, low, close, volume, quote_volume
-            FROM kline_data
-            WHERE symbol = ? AND interval = ?
-        """
-        params = [symbol, interval]
-        
-        if start_date:
-            query += " AND timestamp >= ?"
-            params.append(start_date)
-        if end_date:
-            query += " AND timestamp <= ?"
-            params.append(end_date)
-            
-        query += " ORDER BY timestamp"
-        
-        df = pd.read_sql_query(query, conn, params=params)
-        conn.close()
-        
-        return self.create_sequences(df, sequence_length)
 
     def _bytes_feature(self, value):
         """Returns a bytes_list from a string / byte."""
