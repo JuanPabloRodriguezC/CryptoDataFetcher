@@ -216,6 +216,7 @@ class CryptoDataCollector:
         
         try:
             conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
 
             df_to_store = df.copy()
             df_to_store['timestamp'] = df_to_store['timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
@@ -225,19 +226,17 @@ class CryptoDataCollector:
                             'quote_volume', 'trades']].copy()
             df_to_store['symbol'] = symbol
             df_to_store['interval'] = interval
+
             
             # Store the data
             df_to_store.to_sql('kline_data', conn, if_exists='append', index=False,
                             method='multi', chunksize=1000)
             
-            # Update the last timestamp
-            self.update_last_time(symbol, interval, df_to_store['timestamp'].iloc[-1])
-            
             conn.close()
         except Exception as e:
             print(f"Error storing data: {e}")
 
-    def collect_data(self, symbol, interval, sleep_time=60):
+    def collect_data(self, symbol, interval, start_date=None, sleep_time=60):
         """
         Continuously collect data for a symbol/interval pair
         
@@ -248,32 +247,44 @@ class CryptoDataCollector:
         """
         print(f"Starting data collection for {symbol} ({interval})")
         print("Press Ctrl+C to stop collecting...")
+
+        last_update = self.get_last_update_time(symbol, interval)
+        if start_date and not last_update:
+            try:
+                start_time = int(datetime.strptime(start_date, '%Y-%m-%d').timestamp() * 1000)
+                print(f"Starting from date: {start_date}")
+            except ValueError as e:
+                print(f"Invalid date format. Please use 'YYYY-MM-DD'. Error: {e}")
+                return
+        elif last_update:
+            # Continue from last update if it exists
+            start_time = int(last_update.timestamp() * 1000)
+            print(f"Continuing from last update: {last_update}")
+        else:
+            # Default to current time minus 1000 intervals if no start date or last update
+            interval_minutes = self._interval_to_minutes(interval)
+            start_time = int((datetime.now() - timedelta(minutes=interval_minutes * 1000)).timestamp() * 1000)
+            print(f"Starting from {interval_minutes * 1000} minutes ago")
         
         while self.is_running:
             try:
-                # Get the last stored timestamp
-                last_update = self.get_last_update_time(symbol, interval)
-                
-                # If we have no data, start from current time minus 1000 intervals
-                if last_update is None:
-                    # Calculate start time based on interval
-                    interval_minutes = self._interval_to_minutes(interval)
-                    start_time = int((datetime.now() - timedelta(minutes=interval_minutes * 1000)).timestamp() * 1000)
-                else:
-                    # Start from the last update
-                    start_time = int(last_update.timestamp() * 1000)
-                
                 # Get new data from Binance
                 new_data = self.get_klines(symbol, interval, start_time=start_time)
                 
-                # Store the new data
-                self.store_kline_data(new_data, symbol, interval)
                 
-                if new_data is not None:
+                if new_data is not None and not new_data.empty:
+                    # Store the new data
+                    self.store_kline_data(new_data, symbol, interval)
                     print(f"{datetime.now()}: Collected {len(new_data) if new_data is not None else 0} new records for {symbol}")
-                
-                if not self.is_running:
+                    self.update_last_time(symbol, interval, new_data['timestamp'].iloc[-1])
+
+                    interval_minutes = self._interval_to_minutes(interval)
+                    start_time = int((new_data['timestamp'].iloc[-1] + timedelta(minutes=interval_minutes)).timestamp() * 1000)
+                else:
+                    print("No new data available")
                     break
+                
+                
                 # Sleep to respect rate limits
                 time.sleep(sleep_time)
                 
@@ -282,7 +293,7 @@ class CryptoDataCollector:
                 if self.is_running:  # Only sleep if we're not shutting down
                     time.sleep(sleep_time)
         
-            print("Data collection stopped gracefully")
+        print("Data collection stopped gracefully")
                 
     def _interval_to_minutes(self, interval):
         """Convert interval string to minutes"""
