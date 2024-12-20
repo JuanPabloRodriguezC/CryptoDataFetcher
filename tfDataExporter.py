@@ -1,16 +1,15 @@
 import numpy as np
 import tensorflow as tf
-from datetime import datetime, timedelta
 import sqlite3
 import pandas as pd
+from utils import create_sequences
 
 class TFDataExporter:
     def __init__(self, database_path="crypto_data.db"):
         self.db_path = database_path
 
 
-    def export_to_numpy(self, symbol, interval, start_date=None, end_date=None,
-                   sequence_length=60, batch_size=1000):
+    def export_to_numpy(self, symbol, interval, sequence_length=60, batch_size=1000):
         """Export data as numpy arrays ready for TensorFlow"""
         conn = sqlite3.connect(self.db_path)
         
@@ -50,7 +49,7 @@ class TFDataExporter:
                 
             # Process this chunk
             if len(df_chunk) > sequence_length:
-                chunk_sequences, chunk_targets = self.create_sequences(
+                chunk_sequences, chunk_targets = create_sequences(
                     df_chunk, 
                     sequence_length=sequence_length
                 )
@@ -66,30 +65,6 @@ class TFDataExporter:
             return None, None
             
         return np.array(sequences), np.array(targets)
-
-    def create_sequences(self, df, sequence_length=60):
-        """Create sequences for time series prediction"""
-        sequences = []
-        targets = []
-        
-        # Use relevant features
-        features = ['open', 'high', 'low', 'close', 'volume', 'quote_volume']
-        
-        # Create sequences only if we have enough data
-        if len(df) <= sequence_length:
-            return sequences, targets
-            
-        for i in range(len(df) - sequence_length):
-            # Create sequence
-            sequence = df[features].iloc[i:(i + sequence_length)].values
-            # Target could be next closing price
-            target = df['close'].iloc[i + sequence_length]
-            
-            sequences.append(sequence)
-            targets.append(target)
-        
-        return sequences, targets
-
 
     def _bytes_feature(self, value):
         """Returns a bytes_list from a string / byte."""

@@ -5,7 +5,7 @@ import sqlite3
 from pathlib import Path
 import signal
 import requests
-import sys
+from utils import interval_to_minutes
 
 class CryptoDataCollector:
     def __init__(self, database_path="crypto_data.db"):
@@ -262,7 +262,7 @@ class CryptoDataCollector:
             print(f"Continuing from last update: {last_update}")
         else:
             # Default to current time minus 1000 intervals if no start date or last update
-            interval_minutes = self._interval_to_minutes(interval)
+            interval_minutes = interval_to_minutes(interval)
             start_time = int((datetime.now() - timedelta(minutes=interval_minutes * 1000)).timestamp() * 1000)
             print(f"Starting from {interval_minutes * 1000} minutes ago")
         
@@ -278,7 +278,7 @@ class CryptoDataCollector:
                     print(f"{datetime.now()}: Collected {len(new_data) if new_data is not None else 0} new records for {symbol}")
                     self.update_last_time(symbol, interval, new_data['timestamp'].iloc[-1])
 
-                    interval_minutes = self._interval_to_minutes(interval)
+                    interval_minutes = interval_to_minutes(interval)
                     start_time = int((new_data['timestamp'].iloc[-1] + timedelta(minutes=interval_minutes)).timestamp() * 1000)
                 else:
                     print("No new data available")
@@ -294,12 +294,5 @@ class CryptoDataCollector:
                     time.sleep(sleep_time)
         
         print("Data collection stopped gracefully")
-                
-    def _interval_to_minutes(self, interval):
-        """Convert interval string to minutes"""
-        units = {'m': 1, 'h': 60, 'd': 1440, 'w': 10080, 'M': 43200}
-        unit = interval[-1]
-        number = int(interval[:-1])
-        return number * units[unit]
     
     
