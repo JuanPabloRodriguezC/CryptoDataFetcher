@@ -1,4 +1,4 @@
-def create_sequences(self, df, sequence_length=60):
+def create_sequences(df, sequence_length=60):
     """Create sequences for time series prediction"""
     sequences = []
     targets = []
@@ -22,7 +22,7 @@ def create_sequences(self, df, sequence_length=60):
     return sequences, targets
 
 
-def interval_to_minutes(self, interval):
+def interval_to_minutes(interval):
         """Convert interval string to minutes"""
         units = {'m': 1, 'h': 60, 'd': 1440, 'w': 10080, 'M': 43200}
         unit = interval[-1]

@@ -236,13 +236,14 @@ class CryptoDataCollector:
         except Exception as e:
             print(f"Error storing data: {e}")
 
-    def collect_data(self, symbol, interval, start_date=None, sleep_time=60):
+    def collect_data(self, symbol, interval, start_date=None, sleep_time=10):
         """
         Continuously collect data for a symbol/interval pair
         
         Parameters:
         - symbol: str, trading pair (e.g., 'BTCUSDT')
         - interval: str, kline interval (e.g., '1h')
+        - start_date: datetime object or string 'YYYY-MM-DD'
         - sleep_time: int, seconds to wait between requests
         """
         print(f"Starting data collection for {symbol} ({interval})")
