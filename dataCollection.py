@@ -5,13 +5,19 @@ import sqlite3
 from pathlib import Path
 import signal
 import requests
+import os
 from utils import interval_to_minutes
+from config import DatabaseConfig
+import psycopg2
+from psycopg2.extras import execute_values
+
+
+
 
 class CryptoDataCollector:
-    def __init__(self, database_path="crypto_data.db"):
+    def __init__(self):
         self.base_url = "https://api.binance.com/api/v3"
-        self.db_path = Path(database_path)
-        self.initialize_database()
+        self.db_config = DatabaseConfig()
         
         self.is_running = True
         signal.signal(signal.SIGINT, self._handle_shutdown)
@@ -21,57 +27,32 @@ class CryptoDataCollector:
         """Handle shutdown signals"""
         print("\nShutdown signal received. Cleaning up...")
         self.is_running = False
+
+    def get_connection_dict(self):
+        return {
+            'dbname': self.DB_NAME,
+            'user': self.DB_USER,
+            'password': self.DB_PASSWORD,
+            'host': self.DB_HOST,
+            'port': self.DB_PORT
+        }
     
     def stop_collecting(self):
         """Method to manually stop collection"""
         self.is_running = False
         print("Stopping data collection...")
         
-    def initialize_database(self):
-        """Create database and tables if they don't exist"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # Create table for kline data
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS kline_data (
-                symbol TEXT,
-                interval TEXT,
-                timestamp TEXT,
-                open REAL,
-                high REAL,
-                low REAL,
-                close REAL,
-                volume REAL,
-                quote_volume REAL,
-                trades INTEGER,
-                PRIMARY KEY (symbol, interval, timestamp)
-            )
-        ''')
-        
-        # Create table to track last update time for each symbol/interval
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS last_updates (
-                symbol TEXT,
-                interval TEXT,
-                last_timestamp TEXT,
-                PRIMARY KEY (symbol, interval)
-            )
-        ''')
-        
-        conn.commit()
-        conn.close()
 
     def get_last_update_time(self, symbol, interval):
         """Get the timestamp of the last stored data point"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = psycopg2.connect(**self.db_config.get_connection_dict())
             cursor = conn.cursor()
             
             cursor.execute('''
                 SELECT last_timestamp 
                 FROM last_updates 
-                WHERE symbol = ? AND interval = ?
+                WHERE symbol = %s AND interval = %s
             ''', (symbol, interval))
             
             result = cursor.fetchone()
@@ -88,7 +69,7 @@ class CryptoDataCollector:
     def update_last_time(self, symbol, interval, timestamp):
         """Update the last stored timestamp"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = psycopg2.connect(**self.db_config.get_connection_dict())
             cursor = conn.cursor()
             
             # Convert timestamp to string if it's a datetime object
@@ -96,8 +77,15 @@ class CryptoDataCollector:
                 timestamp = timestamp.strftime('%Y-%m-%d %H:%M:%S')
             
             cursor.execute('''
-                INSERT OR REPLACE INTO last_updates (symbol, interval, last_timestamp)
-                VALUES (?, ?, ?)
+                INSERT INTO 
+                    last_updates (symbol, interval, last_timestamp)
+                VALUES 
+                    (%s, %s, %s)
+                ON CONFLICT 
+                    (symbol, interval)
+                DO UPDATE SET 
+                    last_timestamp = excluded.last_timestamp;
+                
             ''', (symbol, interval, timestamp))
             
             conn.commit()
@@ -215,7 +203,7 @@ class CryptoDataCollector:
             return
         
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = psycopg2.connect(**self.db_config.get_connection_dict())
             cursor = conn.cursor()
 
             df_to_store = df.copy()
@@ -227,11 +215,14 @@ class CryptoDataCollector:
             df_to_store['symbol'] = symbol
             df_to_store['interval'] = interval
 
-            
-            # Store the data
-            df_to_store.to_sql('kline_data', conn, if_exists='append', index=False,
-                            method='multi', chunksize=1000)
-            
+            records = df_to_store.to_records(index=False)
+            data = list(records)
+
+            # Insert the data
+            insert_query = f"INSERT INTO kline_data ({','.join(df_to_store.columns)}) VALUES %s"
+            execute_values(cursor, insert_query, data, page_size=1000)
+
+            conn.commit()
             conn.close()
         except Exception as e:
             print(f"Error storing data: {e}")
