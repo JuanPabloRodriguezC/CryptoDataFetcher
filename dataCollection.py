@@ -206,12 +206,33 @@ class CryptoDataCollector:
             conn = psycopg2.connect(**self.db_config.get_connection_dict())
             cursor = conn.cursor()
 
-            df_to_store = df.copy()
-            df_to_store['timestamp'] = df_to_store['timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
-            
-            # Convert DataFrame to format matching database schema
+            # Create copy and select needed columns first
             df_to_store = df[['timestamp', 'open', 'high', 'low', 'close', 'volume', 
                             'quote_volume', 'trades']].copy()
+            
+            # Then convert timestamp to string
+            df_to_store['timestamp'] = df_to_store['timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
+
+            # More aggressive type conversion
+            df_to_store = df_to_store.apply(lambda x: x.astype(object) if x.name != 'timestamp' else x)
+            
+            # Convert the DataFrame to a list of tuples with explicit type conversion
+            rows = []
+            for _, row in df_to_store.iterrows():
+                row_data = (
+                    str(row['timestamp']),
+                    float(row['open']),
+                    float(row['high']),
+                    float(row['low']),
+                    float(row['close']),
+                    int(row['volume']),
+                    float(row['quote_volume']),
+                    int(row['trades'])
+                )
+                rows.append(row_data)
+            
+            
+            # Add symbol and interval columns
             df_to_store['symbol'] = symbol
             df_to_store['interval'] = interval
 
@@ -250,7 +271,8 @@ class CryptoDataCollector:
                 return
         elif last_update:
             # Continue from last update if it exists
-            start_time = int(last_update.timestamp() * 1000)
+            interval_ms = interval_to_minutes(interval) * 60 * 1000
+            start_time = int(last_update.timestamp() * 1000) + interval_ms
             print(f"Continuing from last update: {last_update}")
         else:
             # Default to current time minus 1000 intervals if no start date or last update
@@ -262,7 +284,6 @@ class CryptoDataCollector:
             try:
                 # Get new data from Binance
                 new_data = self.get_klines(symbol, interval, start_time=start_time)
-                
                 
                 if new_data is not None and not new_data.empty:
                     # Store the new data
